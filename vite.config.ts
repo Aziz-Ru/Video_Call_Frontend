@@ -4,5 +4,5 @@ import { defineConfig } from "vite";
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [react()],
-  base: "/Video_Call_Frontend",
+  // base: "/Video_Call_Frontend",
 });
