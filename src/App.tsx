@@ -1,4 +1,4 @@
-import { BrowserRouter, Route, Routes } from "react-router-dom";
+import { HashRouter, Route, Routes } from "react-router-dom";
 
 import HomePage from "./components/HomePage";
 import RoomPage from "./components/RoomPage";
@@ -8,7 +8,7 @@ import { SocketProvider } from "./providers/Socket";
 function App() {
   return (
     <>
-      <BrowserRouter>
+      <HashRouter>
         <SocketProvider>
           <PeerProvider>
             <Routes>
@@ -17,7 +17,7 @@ function App() {
             </Routes>
           </PeerProvider>
         </SocketProvider>
-      </BrowserRouter>
+      </HashRouter>
     </>
   );
 }
