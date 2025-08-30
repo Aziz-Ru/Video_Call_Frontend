@@ -10,6 +10,7 @@ interface PeerType {
   sendStream: (stream: MediaStream) => Promise<void>;
   setFinalAnswer: (answer: RTCSessionDescriptionInit) => Promise<void>;
   remoteStream: MediaStream | null;
+  addIceCandidate: (candidate: RTCIceCandidateInit) => Promise<void>;
 }
 const PeerContext = React.createContext<PeerType | null>(null);
 
@@ -69,6 +70,10 @@ export const PeerProvider = ({ children }: { children: React.ReactNode }) => {
     setremoteStream(streams[0]);
   }, []);
 
+  const addIceCandidate = async (candidate: RTCIceCandidateInit) => {
+    await peer.addIceCandidate(new RTCIceCandidate(candidate));
+  };
+
   useEffect(() => {
     peer.addEventListener("track", handleTrackEvent);
 
@@ -86,6 +91,7 @@ export const PeerProvider = ({ children }: { children: React.ReactNode }) => {
         sendStream,
         remoteStream,
         setFinalAnswer,
+        addIceCandidate,
       }}
     >
       {children}

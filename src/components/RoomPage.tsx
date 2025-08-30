@@ -15,6 +15,20 @@ const RoomPage = () => {
   const { peer, createOffer, acceptOffer, setFinalAnswer } = usePeer();
   const streamInitialized = useRef(false);
 
+  useEffect(() => {
+    peer.onicecandidate = (event) => {
+      if (event.candidate) {
+        socket.emit("ice-candidate", {
+          candidate: event.candidate,
+          to: remoteSocketId,
+        });
+      }
+    };
+    return () => {
+      peer.onicecandidate = null;
+    };
+  }, [peer, socket, remoteSocketId]);
+
   // Function to get user media with proper error handling
   const getUserMedia = useCallback(
     async (retryCount = 0): Promise<MediaStream | null> => {
@@ -43,34 +57,37 @@ const RoomPage = () => {
         console.log("Successfully got media stream");
         setIsGettingMedia(false);
         return stream;
-      } catch (error: any) {
+      } catch (error: unknown) {
         console.error(
           `Error getting media (attempt ${retryCount + 1}):`,
           error
         );
         setIsGettingMedia(false);
 
-        if (error.name === "NotReadableError" && retryCount < 2) {
+        if (error instanceof DOMException && retryCount < 2) {
           console.log("Camera might be in use, waiting and retrying...");
           await new Promise((resolve) => setTimeout(resolve, 1000));
           return getUserMedia(retryCount + 1);
         }
 
-        if (error.name === "NotAllowedError") {
+        if (error instanceof DOMException && error.name === "NotAllowedError") {
           setMediaError(
             "Camera/microphone access denied. Please allow permissions and refresh the page."
           );
           return null;
         }
 
-        if (error.name === "NotFoundError") {
+        if (error instanceof DOMException && error.name === "NotFoundError") {
           setMediaError(
             "No camera or microphone found. Please connect a camera and microphone."
           );
           return null;
         }
 
-        if (error.name === "NotReadableError") {
+        if (
+          error instanceof DOMException &&
+          error.name === "NotReadableError"
+        ) {
           // Try audio-only as fallback
           try {
             console.log("Trying audio-only fallback...");
@@ -82,7 +99,8 @@ const RoomPage = () => {
               "Camera unavailable (might be in use). Using audio-only mode."
             );
             return audioOnlyStream;
-          } catch (audioError) {
+          } catch (error: unknown) {
+            console.error("Error in audio-only fallback:", error);
             setMediaError(
               "Camera is in use by another application. Please close other applications using the camera."
             );
@@ -90,7 +108,11 @@ const RoomPage = () => {
           }
         }
 
-        setMediaError(`Media error: ${error.message}`);
+        setMediaError(
+          `Media error: ${
+            error instanceof DOMException ? error.message : String(error)
+          }`
+        );
         return null;
       }
     },
@@ -296,12 +318,25 @@ const RoomPage = () => {
     [setFinalAnswer]
   );
 
+  const handleIceCandidate = useCallback(
+    async ({ candidate }: { candidate: RTCIceCandidateInit }) => {
+      try {
+        console.log("Adding ICE candidate:", candidate);
+        await peer.addIceCandidate(new RTCIceCandidate(candidate));
+      } catch (error) {
+        console.error("Error adding ICE candidate:", error);
+      }
+    },
+    [peer]
+  );
+
   useEffect(() => {
     socket.on("user-joined", handleNewUserJoin);
     socket.on("incoming-offer", handleIncomingOffer);
     socket.on("accepted-answer", handleAcceptedAnswer);
     socket.on("negotiation-accept", handleNegotiationNeededIncoming);
     socket.on("nego-final", handleFinalNegotiation);
+    socket.on("ice-candidate", handleIceCandidate);
 
     return () => {
       socket.off("user-joined", handleNewUserJoin);
@@ -309,6 +344,7 @@ const RoomPage = () => {
       socket.off("accepted-answer", handleAcceptedAnswer);
       socket.off("negotiation-accept", handleNegotiationNeededIncoming);
       socket.off("nego-final", handleFinalNegotiation);
+      socket.off("ice-candidate", handleIceCandidate);
     };
   }, [
     socket,
@@ -317,6 +353,7 @@ const RoomPage = () => {
     handleAcceptedAnswer,
     handleNegotiationNeededIncoming,
     handleFinalNegotiation,
+    handleIceCandidate,
   ]);
 
   const handleRemoteStream = useCallback((ev: RTCTrackEvent) => {
@@ -385,32 +422,36 @@ const RoomPage = () => {
   }, [myStream]);
 
   return (
-    <div className="p-4">
-      <div className="mb-4">
-        <h2 className="text-xl font-bold mb-2">
-          Room ID: 1234 -{" "}
+    <div className="flex flex-col items-center justify-center min-h-screen bg-gray-900 text-white p-4">
+      <div className="w-full max-w-6xl bg-gray-800 rounded-lg shadow-xl p-6 mb-8">
+        <h1 className="text-3xl font-extrabold text-center mb-6 text-indigo-400">
+          Video Call Room: 1234
+        </h1>
+        <p className="text-center text-lg mb-6 text-gray-300">
           {remoteSocketId
-            ? `Connected to: ${remoteSocketId}`
-            : "No one in room"}
-        </h2>
+            ? `Connected with: ${remoteSocketId}`
+            : "Waiting for someone to join..."}
+        </p>
 
         {mediaError && (
-          <div className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded mb-4">
-            <strong>Media Error:</strong> {mediaError}
+          <div className="bg-red-700 border border-red-500 text-white px-4 py-3 rounded-md mb-6 shadow-md flex items-center justify-between">
+            <div>
+              <strong className="font-bold">Media Error:</strong> {mediaError}
+            </div>
             <button
               onClick={retryMediaAccess}
-              className="ml-2 bg-red-500 hover:bg-red-700 text-white px-2 py-1 rounded text-sm"
+              className="ml-4 bg-red-500 hover:bg-red-600 text-white px-4 py-2 rounded-md text-sm font-semibold transition duration-300"
             >
-              Retry
+              Retry Access
             </button>
           </div>
         )}
 
-        <div className="space-x-2 mb-4">
+        <div className="flex justify-center space-x-4 mb-8">
           {remoteSocketId && myStream && (
             <button
               onClick={handleCreateOffer}
-              className="bg-green-600 hover:bg-green-700 text-white px-4 py-2 rounded"
+              className="bg-green-500 hover:bg-green-600 text-white px-6 py-3 rounded-lg text-lg font-semibold shadow-md transition duration-300 transform hover:scale-105"
               disabled={isGettingMedia}
             >
               {isGettingMedia ? "Getting Media..." : "Start Call"}
@@ -419,27 +460,26 @@ const RoomPage = () => {
 
           <button
             onClick={debugPeerConnection}
-            className="bg-gray-600 hover:bg-gray-700 text-white px-4 py-2 rounded"
+            className="bg-gray-600 hover:bg-gray-700 text-white px-6 py-3 rounded-lg text-lg font-semibold shadow-md transition duration-300 transform hover:scale-105"
           >
             Debug Connection
           </button>
 
           <button
             onClick={retryMediaAccess}
-            className="bg-blue-600 hover:bg-blue-700 text-white px-4 py-2 rounded"
+            className="bg-blue-500 hover:bg-blue-600 text-white px-6 py-3 rounded-lg text-lg font-semibold shadow-md transition duration-300 transform hover:scale-105"
             disabled={isGettingMedia}
           >
             {isGettingMedia ? "Getting Media..." : "Retry Camera"}
           </button>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          <div>
-            <h3 className="text-lg font-semibold mb-2">My Video</h3>
-            <div
-              className="bg-black rounded-lg overflow-hidden"
-              style={{ aspectRatio: "16/9" }}
-            >
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-8">
+          <div className="relative bg-gray-900 rounded-lg overflow-hidden shadow-lg border-2 border-indigo-500">
+            <h3 className="absolute top-4 left-4 text-xl font-bold bg-gray-900 px-3 py-1 rounded-md">
+              My Video
+            </h3>
+            <div className="w-full aspect-video">
               {myStream ? (
                 <ReactPlayer
                   url={myStream}
@@ -447,9 +487,10 @@ const RoomPage = () => {
                   muted
                   width="100%"
                   height="100%"
+                  style={{ objectFit: "cover" }}
                 />
               ) : (
-                <div className="flex items-center justify-center h-full text-white">
+                <div className="flex items-center justify-center w-full h-full bg-gray-700 text-gray-300 text-xl font-medium">
                   {isGettingMedia
                     ? "Getting camera access..."
                     : "Camera not available"}
@@ -458,21 +499,21 @@ const RoomPage = () => {
             </div>
           </div>
 
-          <div>
-            <h3 className="text-lg font-semibold mb-2">Remote Video</h3>
-            <div
-              className="bg-black rounded-lg overflow-hidden"
-              style={{ aspectRatio: "16/9" }}
-            >
+          <div className="relative bg-gray-900 rounded-lg overflow-hidden shadow-lg border-2 border-green-500">
+            <h3 className="absolute top-4 left-4 text-xl font-bold bg-gray-900 px-3 py-1 rounded-md">
+              Remote Video
+            </h3>
+            <div className="w-full aspect-video">
               {remoteStream ? (
                 <ReactPlayer
                   url={remoteStream}
                   playing
                   width="100%"
                   height="100%"
+                  style={{ objectFit: "cover" }}
                 />
               ) : (
-                <div className="flex items-center justify-center h-full text-white">
+                <div className="flex items-center justify-center w-full h-full bg-gray-700 text-gray-300 text-xl font-medium">
                   {remoteSocketId
                     ? "Waiting for remote video..."
                     : "No remote user"}
@@ -482,11 +523,20 @@ const RoomPage = () => {
           </div>
         </div>
 
-        <div className="mt-4 text-sm text-gray-600">
-          <p>Streams sent: {isStreamsSent ? "Yes" : "No"}</p>
-          <p>Local stream: {myStream ? "Ready" : "Not ready"}</p>
-          <p>Remote stream: {remoteStream ? "Connected" : "Not connected"}</p>
-          <p>Getting media: {isGettingMedia ? "Yes" : "No"}</p>
+        <div className="mt-8 p-4 bg-gray-700 rounded-md text-gray-200 text-center text-sm shadow-inner">
+          <p>
+            <strong>Streams sent:</strong> {isStreamsSent ? "Yes" : "No"}
+          </p>
+          <p>
+            <strong>Local stream:</strong> {myStream ? "Ready" : "Not ready"}
+          </p>
+          <p>
+            <strong>Remote stream:</strong>{" "}
+            {remoteStream ? "Connected" : "Not connected"}
+          </p>
+          <p>
+            <strong>Getting media:</strong> {isGettingMedia ? "Yes" : "No"}
+          </p>
         </div>
       </div>
     </div>
